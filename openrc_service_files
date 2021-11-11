@@ -1,0 +1,25 @@
+Writing OpenRC Service Files
+----------------------------
+
+Basic OpenRC service files can be only a few lines long. Since the start, stop, and status functions are understood by default by openrc-run, which is the default interpreter for service scripts, you only need to write a few lines telling the interpreter what is to be started, what options to pass to the command, and where to write the PID file. These lines are:
+
+command="/path/to/executable"
+command_args="arguments passed to the executable"
+pidfile="/path/to/pidfile"
+
+Let's suppose now we want to write a service to launch the SSH daemon. In that case, we need to create the service file as follows:
+
+/etc/init.d/sshd
+----------------
+
+#!/usr/bin/openrc-run
+
+command="/usr/bin/sshd"
+pidfile="/run/sshd.pid"
+command_args=""
+
+And that's it. Make this file executable and this should be enough to start and stop the service as any other.
+
+NOTE: the 'restart' function also works by default, but only as a shortcut to stop and start.
+
+NOTE 2: For more complex configurations take a look at my "arpwacth" article, at other openrc services and to the 'Service Script Writing Guide' provided by Openrc itself: "https://github.com/OpenRC/openrc/blob/master/service-script-guide.md"

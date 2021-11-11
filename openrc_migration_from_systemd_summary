@@ -1,0 +1,157 @@
+Migrating from Systemd to OpenRC (short version)
+------------------------------------------------
+
+1) Add the Artix repositories:
+
+1.a) Download and save the Artix mirrorlist:
+
+# /bin/curl -s -o /etc/pacman.d/artix_mirrorlist https://gitea.artixlinux.org/packagesA/artix-mirrorlist/raw/branch/master/trunk/mirrorlist
+
+1.b) In '/etc/pacman.conf': 
+
+1.b.1) Set pacman "SigLevel" option to "Never"
+
+1.b.2) Add Artix repos using the mirrorlist downloaded before (make sure you put them on top of the repos list, that is, above [core]):
+
+[system]
+Include = /etc/pacman.d/artix_mirrorlist
+
+[world]
+Include = /etc/pacman.d/artix_mirrorlist
+
+[galaxy]
+Include = /etc/pacman.d/artix_mirrorlist
+
+[core]
+...
+
+1.c) Update pacman database:
+
+# pacman -Sy
+
+1.d) Install the 'artix-keyring' package:
+
+# pacman -S artix-keyring
+
+1.e) Revert changes made in step 1.b.1 to reenable pacman signature check.
+
+2) Force removal of 'systemd' and 'systemd-libs' packages:
+
+NOTE: Before doing this it's recommended, tough not necessary, to create a list of currently running services:
+$ systemctl list-units --state=running "*.service" | grep -v systemd > services.list
+
+# pacman -Rdd systemd systemd-libs
+
+3) Install openrc base packages:
+
+# pacman -S openrc eudev libelogind --overwrite "*"
+
+4) Tell the kernel to use openrc built-in init system: 'openrc-init'. Add the following kernel parameter to your bootloader configuration file:
+
+init=/usr/bin/openrc-init
+
+In the GRUB config file it should look something like this:
+
+linux /vmlinuz-linux-libre-hardened root=/dev/sdax rw loglevel=3 init=/usr/bin/openrc-init
+
+5) Though not strictly necessary to make openrc work, you should install and enable some networking service like 'dhcpcd' or 'networkmanager' before rebooting (you won't have internet connection otherwise):
+
+For 'dhcpcd':
+# pacman -S dhcpcd-openrc
+# rc-update add dhcpcd default
+
+Or for 'networkmanager':
+# pacman -S networkmanager-openrc
+# rc-update add NetworkManager default
+
+6) Reboot.
+
+
+Post-Installation Setup
+-----------------------
+
+1) Set your keymap and hostame (in '/etc/conf.d/keymaps' and '/etc/conf.d/hostname' respectivelly). Example:
+
+hostname="my_hostname"
+
+keymap="la-latin1"
+
+2) Add your user to some basic groups:
+
+# usermod -a -G audio,video,power,optical,storage,disk,sys,lp,scanner your_username
+
+3) Install and enable some basic services:
+
+# pacman -S syslog-ng-openrc ufw-openrc cronie-openrc
+$ for service in syslog-ng ufw cronie; do sudo rc-update add "$service" default; done
+
+NOTE: If you need some extra service you should install '"service_name"-openrc' and then enable the service. Example: # pacman -S ufw-openrc; rc-update add ufw default
+If your're not sure about the correct service name for a given package, run 'pacman -Ql service_name-openrc' and check the content of '/etc/init.d'.
+
+4) Remove unnecessary systemd users:
+
+$ for user in $(awk -F':' '/systemd/{print $1}' /etc/passwd); do sudo userdel "$user"; done
+
+Same thing for groups:
+
+$ for group in $(awk -F':' '/systemd/{print $1}' /etc/group); do sudo groupdel "$group"; done
+
+Now remove old systemd files and directories:
+
+# rm -rf /etc/systemd /var/lib/systemd /var/log/journal
+
+5) Replace systemd depending packages by their Artix version.
+
+5.a) Get a list of all currently installed packages depending on 'systemd' and/or 'systemd-libs':
+
+for pkg in /var/lib/pacman/local/*; do if [[ $(awk '/%DEPENDS%/{f=1;next} / /{f=0} f' $pkg/desc 2>/dev/null | grep "^systemd$\|^systemd-libs$") ]]; then echo ${pkg##*/}; fi; done
+
+5.b) Now, you can simply reinstall all these packages (from the Artix repos). Example:
+
+# pacman -S mkinitcpio util-linux
+
+6) To run X as a normal user, there are two ways:
+
+a) Edit '/etc/X11/Xwrapper.config' and add or modify this line:
+
+needs_root_rights = yes
+
+Or b) Add your user to the 'input' group:
+
+# usermod -a -G input your_username
+
+7) If you have being using 'systemd-boot' (which obviously depends on systemd), replace it by the GRUB.
+
+8) Install 'openrc-bash-completions', 'esysusers', and 'etmpfiles'
+
+
+Recovering the Arch Linux branding (optional)
+---------------------------------------------
+
+1) Rebuild the openrc package using the Artix PKGBUILD:
+
+1.a) Clone the Artix database:
+
+$ mkdir -p build/artix; cd build/artix
+$ git clone https://gitea.artixlinux.org/artixlinux/packages-openrc.git
+
+1.b) Go to 'build/artix/packages-openrc/openrc/repos/core-x86_64', rebuild and install the package:
+
+$ makepkg -si
+
+NOTE: Make sure 'fakeroot', 'binutils', 'patch', 'make', and 'gcc' packages are installed before running 'makepkg'.
+
+NOTE 2: For a more complete explanation and further configuration see my "openrc_artix_pkgbuild".
+
+2) Add 'linux', 'filesystem', and 'openrc' to the "IgnorePkg" group in 'pacman.conf':
+
+/etc/pacman.conf
+----------------
+
+IgnorePkg = linux filesystem openrc
+
+From now on, you should install 'linux' and 'filesystem' manually, whenever there is an apdate, from the [core] repo:
+
+# pacman -S core/filesystem core/linux
+
+As to 'openrc', you need to rebuild it on every new update to preserve the Arch Linux branding.

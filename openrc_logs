@@ -1,0 +1,11 @@
+WRITE!!!
+
+Install 'syslog-ng-openrc' and enable/start the service.
+
+'logrotate'
+
+Unlike systemd logs, which are binary files, OpenRC logs are simple text files, and as such, parsable via any linux command like less, grep, awk and so on.
+
+Log files: '/var/log/{auth,daemon,errors,everything,kernel,messages,syslog,rc,user}.log'
+
+Some applications, like cronie or syslog-ng will create a log file in this same directory, namely, '/var/log/{crond,syslog}.log' respectively.

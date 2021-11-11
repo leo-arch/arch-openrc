@@ -1,0 +1,35 @@
+Migrating from SystemD to OpenRC (AUR only edition)
+--------------------------------------------------
+
+Pros: You don't need to play around with different repositories and upgrades conflicts: everything is done from within Arch. Indeed the systemd-free mkinitcpio version, for example, is not called mkinitcpio, but mkinitpcio-nosystemd, avoiding thus crashes with the systemd version. The same goes for dbus, cups, and syslog-ng.
+
+Cons: Since everything is installed from the AUR, the process is slower (you need to compile everything) and it might fails. Besides, some service files like openvpn, tor, and dnscrypt-proxy, among others, cannot be found in the AUR, forcing you therefore to install them from another repository, say Artix or Parabola. The same goes for some packages like colord (a dependency of GTK3), libwacom, libinput, lvm2, util-linux, p11-kit, and libgudev, all of them depending on systemd. 
+
+1) Force removal of systemd:
+
+# pacman -Rdd systemd systemd-libs
+
+2) Install the following packages from the AUR: openrc eudev libeudev openrc-arch-services-git dbus-openrc mkinitcpio-nosystemd cups-nosystemd dbus-nosystemd elogind polkit-elogind dhcpcd-without-systemd libpulse-nosystemd
+
+NOTE: elogind (and thereby libelogind) failed to compile. I installed them from [pcr].
+
+3) Edit '/etc/openrc/init.d/udev' (provided by 'openrc-arch-services-git') and change the "command" line from "/usr/lib/systemd/systemd-udevd" to "/usr/bin/udevd"
+
+NOTE: By default, this udev init script is configured to use systemd-udev, so that we only need to tell it to use eudev instead.
+
+4) Edit the input parameter in the kernel line in your bootloader: "init=/usr/bin/openrc-init"
+
+5) Add you user to the following groups:
+
+# usermod -a -G video,audio,storage,lp,power,sys,disk,optical your_username
+
+6) Enable getty for tty1
+
+# ln -s /etc/openrc/init.d/agetty /etc/openrc/init.d/agetty.tty1
+# cp /etc/openrc/conf.d/agetty /etc/openrc/conf.d/agetty.tty1
+
+7) Edit /etc/openrc/conf.d/{hostname,keymaps}
+
+8) Add/enable services: udev (sysinit), agetty.tty1 (default) dhcpcd (default) syslog-ng (default)
+
+9) Reboot

@@ -1,0 +1,390 @@
+Migrating from Systemd to OpenRC
+--------------------------------
+
+A Few Introductory Words 
+------------------------
+
+What follows is a guide to completely replace systemd by openrc, and (optionally) preserve the "Arch Linux" branding.
+
+Systemd, just as OpenRC and others, is basically an init system, namely, the first process (actually a daemon) started by the kernel. It continous running until the system is shutdown. Meanwhile, as the first process of the process tree (PID 1), it is the root or sit of any other process started later. Most init systems also provide a daemon (or service) manager, that is, the ability to check daemons status, start/stop, and enable/disable them. However, some of them, like systemd, do much more that this.
+
+Systemd is the default init system in Arch Linux since 2012 (and in many other major distributions since then: Debian, Red Hat, Fedora, Ubuntu, SUSE, Mint, and CentOS, among others). However, it's not only the default, but also the only officially supported one, at least by Arch Linux. This is why, because Linux is about choices, it's a good idea to take a look at an alternative, though not officialy supported, init system: OpenRC, developed and maintained by the Gentoo developers. 
+
+NOTE: On the reasons why Arch moved to systemd see: "https://www.reddit.com/r/archlinux/comments/4lzxs3/why_did_archlinux_embrace_systemd/d3rhxlc/"
+
+NOTE 2: For a list of distros and their default init system see: "https://en.wikipedia.org/wiki/Comparison_of_Linux_distributions" 
+
+The reasons to move away from systemd might be many, but there are three that I want to briefly consider: 1) First of all, just because being able to try different alternatives allows us to choose, to be better and to know more, that is, to be free!; 2) Systemd tends to be bloated and to move away from the Unix/Linux main credo: "do one thing, and do it well", that is to say, modularity and simplicity. According to the Devuan guys indeed, systemd "breaks portability, ignores backwards compatibility, and replaces existing services, forcing systemd into adoption" (this is specially important for a distro like Arch that has make since the very beginning the KISS principle into its main feature); 3) OpenRC is less resource intensive (about half of systemd, though this depends on your system).
+
+NOTE: In support of Arch, it must be said that its Wiki contains an article on how to (partially) migrate to OpenRC. On the other side, however, OpenRC packages are provided only by the AUR (that is, unofficially), but some packages (specially openrc services) are still missing. I really hope someone will someday create an Arch repository containing all the openrc packages needed to succesfully perform a complete migration and to keep the system up to date. That would be great for everyone, and specially for Arch, since it will prevent us from the need to use repositories coming from different distros, like we'll do here.
+
+NOTE 2: Regarding the bloated (non-KISS) nature of systemd, we should take the following into account: whereas openrc ships only 12 binaries, systemd ships 40!, most of them functionalities that we can add to openrc (by default just an init system and service manager) by way of third-party programs: udevd, journald, systemd-boot, logind, timers, networkd, timedated, and more. This is why systemd installation size is around 20Mb, while openrc weights only 2Mb! In our migration we'll be replacing systemd-udevd by eudev, systemd-journald by syslog-ng, systemd-boot by the grub, systemd-logind by elogind, and systemd timers by cronie, among other stuff.
+
+This little table gives you an idea of the different memory footprint of both init systems:
+
+	systemd		9Mb	openrc		1Mb
+	journald	24Mb	syslog-ng	8Mb
+	systemd-udevd	8Mb	eudev udevd	3Mb
+	logind		7Mb	elogind		2Mb
+
+The Artix Linux FAQ site contains several links about this topic: "https://artixlinux.org/faq.php"
+
+NOTE 2: On the debate about Systemd see "the init freedom campaign" started by the Devuan community: "https://www.devuan.org/os/init-freedom/", and "https://suckless.org/sucks/systemd/"
+
+NOTE 3: OpenRC is not the only alternative to Systemd: sinit, runit, s6, and shepherd should also be mentioned here.
+
+The aim of the migration process is to replace Systemd, of course, and this implies: a) systemd itself ('systemd' and 'systemd-libs' packages indeed); b) service files; and c) packages depending on systemd like 'udev', 'dbus', 'mkinitcpio', and 'util-linux', among a few others.
+
+The basic procedure of this migration is quite straigthforward and could be briefly sketched as follows: a) remove 'systemd' (and 'systemd-libs'); b) install 'openrc' and needed packages, like 'eudev' and 'libelogind'; c) reboot; and finally, d) a few post-migration configurations. That's it! Easy, isn't?
+
+What follows is a more detailed explanation of the whole migration process.
+
+
+Say Goodby to Systemd!
+----------------------
+
+1) Add the Artix Linux repositories ([system], [world], and [galaxy]) to '/etc/pacman.conf'; make sure you place them on top of the repositories list (that is, above [core]). See my "using_artix_repos" and "https://wiki.artixlinux.org/Main/Migration". We will get from here 'openrc', but also the openrc service files and packages (as replacements for systemd services and packages).
+
+NOTE: Originally released in 2012 as "Arch OpenRC" and "Manjaro OpenRC", both merged in 2017 to create Artix Linux: The Art of Linux (Arch Linux less systemd).
+
+NOTE 2: There are at least four sources for openrc and related packages: a) the AUR; b) Artix repos (specially [system] and [world]), c) Parabola repos ([pcr], and specially [nonsystemd]); and d) Hyperbola repos. I choose here Artix however because it alone, precisely because it is a systemd-free specific distro, provides all the packages needed to carry out the entire migration process. Regarding the AUR, it provides only the base openrc packages; some openrc replacements for service files and systemd depending packages could not (as of today) be found here. You can take a look however at my "openrc_migration_aur".
+
+NOTE 2: If using a 32 bits machine, you have only one alternative: Parabola's repositories, and more precisely, [nonsystemd] and [pcr].
+
+We place Artix repos (at least during the migration phase) above Arch official ones to prevent the (re)installation/updagrade of packages like 'mkinitcpio' or 'util-linux' that depends on 'systemd' and/or 'systemd-libs'. In its place we use Artix' systemd-free version of these packages (which replace 'systemd' and 'systemd-libs' by 'elogind' and 'libelogind' respectivelly). 
+
+NOTE: It must be noted however that Artix' 'elogind' and 'libelogind' packages provides 'systemd' and 'systemd-libs' respectivelly, so that, even when installing 'mkinitcpio', for example, from Arch repos, pacman will take its dependency on 'systemd' as satisfied by 'elogind'. If you want nonentheless a 100% free-systemd system, it's better to remove even these nominal references to systemd.
+
+NOTE 2: Regarding most AUR packages depending on 'systemd', such as 'auracle-git', you won't find any systemd-free replacement in Artix repos, so that you need to edit the corresponding PKGBUILD, change systemd and systemd-libs (or libsystemd.so) by elogind and libelogind respectivelly, and rebuild the package.
+
+NOTE 3: In any case, you can always put Arch repos back to the top of the repos list later if you want to. However, the only reason to do this would be download speed: against the more than 400 mirrors of Arch, Artix has only 8, so that chances are (a lot) that Arch's repos will be much nearer to you and faster. 
+
+NOTE 4: Why we don't simply get rid of Arch official repos: A) They are bigger than Artix', providing thus packages it doesn't (for example, 'openbox'). In fact, a pure Artix installation keeps [extra] and [community], though disabling [core], below its own repos. B) To prevent, though this is optional, our Arch Linux form "becoming" Artix or Parabola Linux, at least nominaly, for example, by replacing the 'filesystem' package. However, being not really necessary for our present pusposes (it's all about names after all), this is up to you. Be it as it may, it won't hurt anyone to keep Arch official repos below Artix ones.
+
+NOTE 5: This whole thing about external repositories might raise in the reader/user the question about the limits of Arch Linux, that is to say, did I move away from Arch Linux just because I'm using external repositories? And even more, did I move away from Arch because my '/usr/lib/os-release' file now says NAME="Artix Linux" instead of "Arch Linux"? I don't think so, for all this is just about names or labels, not about the actual distribution. However, if you are unconfortable with this (because you want your Arch system to be named "Arch"), I provide a section aimed to explain how to prevent "Arch Linux" from becoming "Artix Linux" in this sense (recall that system information utlities like 'neofetch', 'screenfetch', and 'mate system monitor' take the distro name from '/usr/lib/os-release'). Regarding the Artix repos, they are indeed Arch repos in the sense that, despite this name, they provide binaries and PKGBUILD files intended to be later installed by pacman (just as the AUR and Arch official repos do). Would [core] cease to be an Arch repo if it had another name or if it were maintained by a different group of developers? Just recall that, leaving aside the systemd debate, Artix is aimed at exactly the same thing as Arch, in every respect: it is just Arch less systemd; it only provides packages not provided by Arch, and in this sense it is just another Arch Linux repository (or set of them).
+
+2) Force removal of 'systemd' and 'systemd-libs' packages: 
+
+NOTE: Since October 2019, 'base' has ceased to be a package group to become a metapackage, that is, a void package that simply installs its dependencies. However, this does not affect the following procedure
+
+NOTE 2: Don't be afraid! If anything goes wrong, and it shouldn't, you can simply reinstall both packages.
+
+It is recommended to create first a list of running systemd services as a guide to create later the corresponding openrc services:
+
+$ systemctl list-units --state=running "*.service" | grep -v systemd > services.list
+
+Now, remove systemd:
+
+# pacman -Rdd systemd systemd-libs
+
+NOTE: '-Rdd' tells pacman to remove (R) these packages skipping all dependency checks (dd); otherwise, it will refuse to uninstall the packages. 
+
+3) Install 'openrc', 'eudev', and 'libelogind' packages: 
+
+pacman -S openrc eudev libelogind --overwrite "*"
+
+NOTE 1: Besides the Artix repos (and the AUR, Parabola, and Hyperbola ones), there are a few more sources to consider: a) GitHub (you can compile the package yourself (via the 'make' command) by downloading the source code from here: "https://github.com/OpenRC/openrc"; and b) the Artix PKGBUILD and build files , which you can get from "https://gitea.artixlinux.org/artixlinux/packages/src/branch/master/openrc/repos/core-x86_64", edit the PKGBUILD to your liking, and build the package with 'makepkg', as if it were any other AUR package. The advantage of this last approach (the one we'll use to get the "Arch Linux" branding back into our openrc system) is that you get the last version of openrc (unlike the AUR version, which is almost 1 year old, and Parabola's one), and that you can easily customize some aspects of the package, like dependencies, branding name, installed files, and default services. See my "openrc_artix_pkgbuild".
+
+NOTE 2: If you install 'openrc' from the AUR, bear these four things in mind: 1) It's not up to date. 2) You need to add "openrc" to the IgnorePkg group in '/etc/pacman.conf' to prevent pacman from replacing it by the Artix (or Parabola) version. 3) This package depends on 'openrc-sysvinit', and thereby on 'sysvinit'. Both packages are provided by Parabola [pcr] repo. If this repo is not enabled, your AUR helper (or you yourself, if using none), will have to manually compile both before 'openrc'. 4) Unlike Artix (and Parabola) version of 'openrc', which place openrc configuration files ('/etc/conf.d', '/etc/init.d', and '/etc/runlevels' directories) in '/etc', the AUR version wants them rather in '/etc/openrc'. This is specially important when installing some openrc service files coming either from Artix or Parabola repos (recall that the AUR lacks many openrc service files): in this case, you have to manually copy the files provided by the package to '/etc/openrc'.
+
+4) Install (and optionally enable) some networking service like 'dhcpcd' or 'networkmanager' (if not, you won't have a working internet connection after reboot).
+
+For 'dhcpcd':
+
+# pacman -S dhcpcd-openrc
+# rc-update add dhcpcd default
+
+For 'networkmanager':
+
+# pacman -S networkmanager-openrc
+# rc-update add NetworkManager default
+
+NOTE: OpenRC also provides an alternative mechanism to set up your network device based on Gentoo's 'netifrc' (you also need to install 'dhcpcd'). A) Edit '/etc/conf.d/net' and add this line: "config_interface=dhcpcd" (example: config_enp2s1=dhcpcd); B) Create a service file for your network interface: 'ln -s /etc/init.d/net.lo /etc/init.d/net.interface'; C) Enable the network service: 'rc-update add net.interface default' 
+
+5) Add this line to the kernel line to tell the system where to find the new init program:
+
+init=/usr/bin/openrc-init
+
+6) Restart. If everything went fine, the machine should now boot with OpenRC.
+
+# openrc-shutdown -r now
+
+			  ###########################
+
+Post-Migration Setup
+--------------------
+
+NOTE: If you didn't enable before a network service, enable and start it now:
+
+# rc-update add dhcpcd default
+# rc-service dhcpcd start
+
+1) Run X as a normal, unprivileged user:
+
+1.a) Edit '/etc/X11/Xwrapper.config' and add this line: 
+
+needs_root_rights = yes
+
+1.b) An alternative procedure is to add your user to the 'input' group while keeping the value of needs_root_right to "no".
+
+2) Set your keymap and hostame (in '/etc/conf.d/keymaps' and '/etc/conf.d/hostname' respectivelly). Example:
+
+keymap="la-latin1"
+
+hostname="my_hostname"
+
+You can now either restart the 'keymaps' and 'hostname' services ('sudo rc-service service restart') or reboot the machine.
+
+3) Add your user to some basic groups (otherwise, since there is no more systemd, you won't be able to access the corresponding devices; you need to be part of the 'audio' group, for instance, in order to play sound, and so on):
+
+# usermod -a -G audio,video,power,optical,storage,disk,sys,lp,scanner your_username
+
+NOTE: This is just an example; you might not need to be part of all these groups (you surely don't need to be part of the 'lp' and 'scanner' groups if you don't have a printer and a scanner). 
+
+4) Install and add the services you need (using the 'services.list' file generated before as a guide):
+
+# pacmman -S syslog-ng-openrc ufw-openrc cronie-openrc
+$ for service in syslog-ng ufw cronie; do sudo rc-update add "$service" default; done
+
+NOTE: It's recommended (though not necessary) to install and enable 'syslog-ng' and 'cronie' to get some basic functionalities such as a logger and a job scheduler (replacements for systemd journal and timers).
+
+NOTE 2: If you need some extra service you should install '"service_name"-openrc' and then enable the service. Example: '# pacman -S ufw-openrc; rc-update add ufw default' to install and enable the 'ufw' firewall. If your're not sure about the correct service name for a given package, run 'pacman -Ql service_name-openrc' and check the content of '/etc/init.d'.
+
+NOTE 3: It might happen (though it is rather rare) that the repos do not provide any service file for the program you need. In this case, try to find one on the internet, and, as a last resource, write it yourself (using some existing service file as a guide): after all, openrc service files are just (openrc-run) scripts. In this case, you should take a look at openrc-run manpage: openrc-run(8). For writing openrc service files see my "openrc_service_files".
+
+5) Remove the now unnecessary systemd users:
+
+$ for user in $(awk -F':' '/systemd/{print $1}' /etc/passwd); do sudo userdel "$user"; done
+
+Same thing for groups:
+
+$ for group in $(awk -F':' '/systemd/{print $1}' /etc/group); do sudo groupdel "$group"; done
+
+Now remove old systemd files and directories as well:
+
+# rm -rf /etc/systemd /var/lib/systemd /usr/include/systemd /var/log/journal
+
+'/usr/lib/systemd', which contains systemd services, sockets, and scripts, is owned by many Arch Linux packages (including 'filesystem', 'glibc', and 'shadow'). To get a list of packages owning '/usr/lib/systemd' run:
+
+$ pacman -Qo /usr/lib/systemd/
+
+Get rid of this directory: 
+
+a) Reinstall all these packages from Artix repos:
+
+# pacman -S $(pacman -Qo /usr/lib/systemd | awk '{print $5}')
+
+b) Remove the entire directory and add it to the "NoExtract" directive in 'pacman.conf' (NoExtract = usr/lib/systemd/*). 
+
+NOTE: However, as the time goes, and if you keep Artix repos on top of the repos list, they will be replaced by the Artix versions anyway (whose only difference regarding the Arch versions is that they won't install anything to '/usr/lib/systemd').
+
+NOTE 2: To get a list of files each package wants in '/usr/lib/systemd' (most of them are service files): 
+
+$ for pkg in $(pacman -Qq); do pacman -Ql $pkg | grep systemd; done
+
+6) Replace systemd depending packages by their Artix (systemd-free) version.
+
+6.a) Get a list of all currently installed packages depending on 'systemd' and/or 'systemd-libs':
+
+for pkg in /var/lib/pacman/local/*; do if [[ $(awk '/%DEPENDS%/{f=1;next} / /{f=0} f' $pkg/desc 2>/dev/null | grep "^systemd$\|^systemd-libs$") ]]; then echo ${pkg##*/}; fi; done
+
+NOTE: You can also try 'pactree', provided by the 'pacman-contrib' package, as follows: 
+
+$ pactree -lrd1 systemd
+$ pactree -lrd1 systemd-libs
+
+6.b) Now, you can simply reinstall all these packages (from the Artix repos). Example:
+
+# pacman -S mkinitcpio util-linux
+
+NOTE: Regarding non-installed (remote) packages, you can check packages depending on systemd as follows:
+
+# pacman -Sii systemd systemd-libs | grep "Required By"
+
+There are alomost 80 packages in Arch official repos directly or indirectly depending on 'systemd' and/or 'systemd-libs'. Artix Linux repos, however, contain systemd-free replacements for many of these packages.
+
+NOTE: 'gtk3', for example, does not directly depend on 'systemd'; however, it does depend on 'colord', which depends on 'systemd'.
+
+NOTE 2: At the time of writing, some packages like 'retroarch', 'weston', and 'gnome-session' have no systemd-free replacement yet (at least not in Artix). However, since 'elogind' and 'libelogind' provides 'systemd' and 'systemd-libs' (or libsystemd.so) respectivelly, these programs should be installed and work fine anyway.
+
+NOTE 3: You could give a try to 'your-initfreedom', provided by Parabola's [nonsystemd] repo. As an alternative, you can download the initfreedom-blacklist from "https://git.parabola.nu/blacklist.git/plain/your-initfreedom-blacklist.txt", parse it, and check your installed packages against it. Be carefull with this package, however: first, because it contains only a few of the almost 80 systemd Arch packages. Secondly, and since it takes into account only Arch packages, it will list 'dbus' for example (even when installed from Artix repos) as a systemd package, because the Artix systemd-free version of this package is called 'dbus' as well. Therefore, it will be blacklisted by 'your-initfreedom'. Use it hence just as a hint.
+
+You can use this little bash script instead to get a list of systemd depending offical Arch packages with no systemd-free alternative yet:
+
+sysd=( $(pacman -Sii systemd systemd-libs | grep "Required By" | cut -d":" -f2) )
+pacman -Sql system world galaxy > /tmp/artix_repo
+for (( i=0;i<${#sysd[*]};i++ )); do
+	if ! [[ $(grep "^${sysd[$i]}$" /tmp/artix_repo) ]]; then
+		echo "${sysd[$i]}"
+	fi
+done
+exit 0
+
+7) If you were using 'systemd-boot', since it obviously depends on systemd and will thereby not be upgraded anymore, you should replace it by the GRUB. Afterwards, you can safely delete systemd-boot files ('/boot/loader/' and '/boot/EFI/{BOOT,systemd}').
+
+8) Enable a tmpfs:
+
+Unlike Systemd, OpenRC won't mount any RAM filesystem, for example, '/tmp', by default. Do it manually by editing '/etc/fstab':
+
+tmpfs   /tmp         tmpfs   rw,nodev,nosuid,size=2G          0  0
+
+NOTE: Size should be half of RAM.
+
+NOTE 2: In the same way, if your swap file/partition is not declared in your '/etc/fstab', make sure to add it (systemd mounts swap automatically by default, but not OpenRC):
+
+UUID=part_UUID	none      	swap      	defaults  	0 0
+
+9) Do not clear the screen before login:
+
+Edit '/etc/conf.d/agetty.tty1' (create a copy from '/etc/conf.d/agetty' if it does not exist) and add "--noclear" to the "agetty_options" variable:
+
+agetty_options="--noclear"
+
+10) A few services you can disable (if you use a very trimmed down system): elogind, dbus, netmount, save-termencoding, save-keymaps, net.lo, agetty.tty{2-6} (only tty1 is actually needed).
+
+11) Install 'openrc-bash-completions', 'esysusers', and 'etmpfiles'.
+
+12) Enable parallel management of services. In '/etc/rc.conf' change the value of "rc_parallel" from "NO" to "YES".
+
+
+A Few Miscellaneous Notes
+-------------------------
+
+1) If you need to modify or edit a service file (that is, a file in '/etc/init.d') recall that this file, unlike config files in '/etc/conf.d', will be overwritten by upgraded versions of the corresponding package. There are a few things you can do: a) add the corresponding package, say 'tor-openrc', to the "IgnorePkg" group in 'pacman.conf'; b) add the service file to the "NoExtract" directive in 'pacman.conf'. The downside of these approaches is that the new, upgraded file won't be there, loosing thereby the improvements it may bring. This is why I recommend a third approach: c) copy both the config and the service files ('/etc/{conf.d,init.d}/tor') using a different name, say, 'tor2', and then manage the service using this service name. Example: 'rc-service tor2 start'. In this way, you can safely upgrade the package and take a look at the new version without loosing your modified version. 
+
+2) Syslog-ng complains during boot that "configuration file format is too old". To get rid of this message simply edit '/etc/syslog-ng/syslog-ng.conf' and change the version number in the first line to the corresponding version (the one printed in the boot warning message). Example: @version 3.17 -> @version 3.22
+In the same way, you can get rid of this message: "WARNING: with use use_dns(no), dns_cache() will be forced to no too!", by explicitly adding "dns_cache (no);" to syslog-ng config file.
+
+3) Various issues with service files
+
+3.a) The 'dnscrypt-proxy-openrc' package can be found in the [galaxy] repository of Artix Linux. To make it work, add this values to '/etc/openrc/conf.d/dnscrypt-proxy':
+
+DNSCRYPT_USER="root"
+DNSCRYPT_GROUP="root"
+
+Then, tell 'dnscrypt' to run as the 'nobody' user (i.e. to drop root privileges). Edit 'etc/dnscrypt-proxy/dnscrypt-proxy.toml' and uncomment this line:
+
+user_name = 'nobody'
+
+3.b) Openvpn ('openvpn-openrc' is provided by Parabola's [pcr] and Artix' [system] repos) is a bit tricky to set up. Firstly, it will look for up.sh and down.sh scripts, which will not find since they seem to be Gentoo specific. On the other side, it looks for openvpn config files in '/etc/openvpn' instead of in '/etc/openvpn/client'. Edit these values in '/etc/openrc/init.d/openvpn' (in this case, take into account the point 1 above about editing service files). Finally, take into account that in order to start openvpn using a particular server (config file), you need to symlink '/etc/init.d/openvpn' to '/etc/init.d/openvpn.profile_name' (for example  openvpn.protonvpn_netherlands, without the .conf extension), and then start the service calling the new symlink. Example: 
+
+# rc-service openvpn.protonvpn_netherlands start
+
+3.c) Regarding TOR ('tor-openrc' is provided by Parabola's [pcr] and Artix' [galaxy] repos), it is recommended to add the following lines to '/etc/tor/torrc' to prevent 'tor' from running as root:
+
+User tor
+PIDFile /var/run/tor/tor.pid
+
+NOTE: I guess it's possible to write your own openrc service files instead of installing packages for each of them. Or you can simply install the corresponding package, copy the service file (/etc/openrc/init.d/package_name), and then remove the openrc package.
+
+NOTE 2: In case a service package cannot be found either in Parabola or Artix respos, there are good chances it was already written and provided by Gentoo.
+
+4) No sound in Mozilla browser when using firejail
+
+This problem is due to the fact that, unlike systemd, openrc users need to belong to the 'audio' group in order to be able to reproduce sound at all. Now, firejail's default profile for 'firefox' (in firefox-common.profile) enables the 'nogroups' directive, which simply prevents the applications from accessing groups privileged features, in this case, sound. So, simply comment the 'nogroups' directive to get your sound back. 
+
+5) Qemu refuses to run
+
+First, add your user to the 'kvm' group. Secondly, make sure that '/dev/kvm', created whenever the kvm (and kvm_intel) module is loaded, is accessible to you: it should have 660 permissions, root as owner, and kvm as group. Otherwise, qemu will complain that it has no permissions to access the kvm module. 
+
+6) If you are using an SSD disk you should use an fstrim daemon like 'fstrimDaemon' (install from Github: https://github.com/dobek/fstrimDaemon), recommended by the Gentoo guys. Download, install, and enable/start the daemon. See "https://wiki.gentoo.org/wiki/SSD".
+
+7) You can explicitly tell the kernel to use openrc built-in init system: 'openrc-init', instead of '/usr/bin/init', a symlink to '/usr/bin/openrc-init' provided by 'artix-sysvcompat'. Add the following to the kernel line in your bootloader configuration file:
+
+init=/usr/bin/openrc-init
+
+The result (this is the GRUB "linux" line) should be something like this:
+
+linux /vmlinuz-linux root=/dev/sdax rw loglevel=3 init=/usr/bin/openrc-init
+
+NOTE: If the init line is ommited, the system will however fallback to '/usr/bin/init'.
+
+8) If you get an error when running opentmpfiles-setup on boot, install 'polkit'. 
+
+
+Recovering the "Arch Linux" branding
+------------------------------------
+
+If you installed the Artix version of 'openrc', you'll see this message at boot: "Starting up Artix Linux". If you want to see the old good "Arch Linux" name instead, follow these steps: 
+
+1) Rebuild the 'openrc' package using the Artix PKGBUILD:
+
+1.a) First of all, clone the Artix repository:
+
+$ mkdir -p build/artix
+$ cd build/artix
+$ git clone https://gitea.artixlinux.org/artixlinux/packages-openrc.git
+
+NOTE: Since we cloned the entire openrc Artix repository, the 'packages-openrc' directory contains PKGBUILD files for all openrc Artix packages, and not only for openrc as such.
+
+1.b) Go to 'build/artix/packages-openrc/openrc/trunk'. Here you should see the PKGBUILD plus a few .hook and .install files. Rebuild and install the package:
+
+$ makepkg -si
+
+NOTE: Make sure 'fakeroot', 'binutils', 'patch', 'make', and 'gcc' packages are installed before running 'makepkg'.
+
+NOTE: Why by simply rebuilding the package we get the "Arch Linux" branding back? Simply because the variable "BRANDING" in the PKGBUILD takes its value from the "NAME" variable in '/usr/lib/os-release' in the building machine. So, if you rebuild the package in an Arch machine, the value of BRANDING will be "Arch Linux". However, this might change in future versions of the PKGBUILD, so that you should check the value of the BRANDING variable before compiling the package. In any case, you can always use a fixed value for this variable as follows: BRANDING='Arch Linux'.
+
+NOTE 2: The Artix version of 'openrc' brings 'netifrc' and 'elogind-openrc' as its dependencies (by default these two services will be added to the boot runlevel). You can tweak the PKGBUILD to remove these dependencies if you like (or if you don't need these packages). 
+
+2) Add 'linux', 'filesystem', and 'openrc' to the "IgnorePkg" group in 'pacman.conf' to prevent them being replaced by the Artix versions, which simply replace "Arch Linux" by "Artix Linux", for example, in 'usr/lib/os-release', provided by the 'filesystem' package. Regarding the linux 'package', the only difference is the version string: instead of something like "5.2.5.arch-1" you'll see "5.2.5.artix-1" when running 'uname -r' and similar utilities. As to 'openrc', if you install/upgrade it from the Artix [system] repo, the "Artix Linux" branding will be back. 
+
+/etc/pacman.conf
+----------------
+
+IgnorePkg = linux filesystem openrc
+
+From now on, you should install 'linux' and 'filesystem' manually, whenever there is an apdate, from the [core] repo:
+
+# pacman -S core/filesystem core/linux
+
+Regarding 'openrc', you need to rebuild it on every new update (if you want the upgraded version, and you should) to preserve the Arch Linux branding.
+
+
+Managing openrc services
+------------------------
+
+Add/enable a service:
+
+# rc-update add <service> <runlevel>
+or
+# ln -s /etc/openrc/init.d/<service> /etc/openrc/runlevels/<runlevel>/<service>
+
+And delete/disable it as follows:
+
+# rc-update del <service> <runlevel>
+or
+# rm /etc/openrc/runlevels/<runlevel>/<service>
+
+List services currently running:
+
+# rc-status --all/-a
+or 
+# rc-status default #or boot, or sysinit, or wathever runlevel
+to list services added to the default runlevel
+
+NOTE: You can also simply list the contents of '/etc/runlevels' (since an enabled service is nothing but a symlink of its service file in '/etc/init.d' to the corresponding runlevel, for example, '/etc/runlevels/default'):
+
+$ ls /etc/runlevels/*
+
+Stop/Start/Restart a service:
+
+# rc-service <service> start
+or, since services are just 'openrc-run' scripts:
+# /etc/openrc/init.d/<service> start
+
+NOTE: For a chart comparing openrc and systemd services management see "https://wiki.gentoo.org/wiki/OpenRC_to_systemd_Cheatsheet"
+
+
+Going back to systemd
+---------------------
+
+The whole process could be easily reverted by simply reinstalling 'systemd' and 'systemd-libs', and then uninstalling/removing the 'openrc' related packages and config files. Do not forget to modify the init parameter of the kernel line in your bootloader to make it point again to the systemd binary: '/usr/lib/systemd/systemd'.
+
+About OpenRC and the migration process from SytemD, you can consult the following sites:
+
+https://wiki.hyperbola.info/doku.php?id=en:migration:from_v0_dot_1
+https://wiki.gentoo.org/wiki/OpenRC
+https://wiki.archlinux.org/index.php/OpenRC
+https://wiki.artixlinux.org/Main/Migration
+https://wiki.parabola.nu/OpenRC
